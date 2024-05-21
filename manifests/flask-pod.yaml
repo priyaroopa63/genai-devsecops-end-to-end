@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: flask
+  name: flask
+spec:
+  containers:
+  - image: 954503069243.dkr.ecr.us-east-2.amazonaws.com/genai-devsecops-poc-ecr:latest
+    ports:
+    - containerPort: 8080
+    name: flask
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}

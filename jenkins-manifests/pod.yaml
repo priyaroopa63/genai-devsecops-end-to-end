@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: flask
+  name: flask-jenkins
+spec:
+  containers:
+  - image: 524566954448.dkr.ecr.ap-south-1.amazonaws.com/chola-digital-poc-flask:latest
+    ports:
+    - containerPort: 8080
+    name: flask
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}

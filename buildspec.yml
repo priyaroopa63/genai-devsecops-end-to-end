@@ -1,0 +1,95 @@
+version: 0.2    
+env: 
+  parameter-store:
+    AWS_ACCESS_KEY_ID: "/CodeBuild/MY_AWS_ACCESS_KEY_ID"
+    AWS_SECRET_ACCESS_KEY: "/CodeBuild/MY_AWS_SECRET_ACCESS_KEY"
+
+phases:
+  install:
+    on-failure: ABORT 
+    commands:
+      
+      - export SONAR_SCANNER_VERSION=4.7.0.2747
+      - export SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION-linux
+      - curl --create-dirs -sSLo $HOME/.sonar/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip
+      - unzip -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
+      - export PATH=$SONAR_SCANNER_HOME/bin:$PATH
+      - export SONAR_SCANNER_OPTS="-server"
+      - REPOSITORY_URI=954503069243.dkr.ecr.us-east-2.amazonaws.com/genai-devsecops-poc-ecr
+ 
+  pre_build:
+    on-failure: ABORT 
+    commands:
+      - echo "sonar code scanning start"
+      # SAST ANALYSIS
+      - sonar-scanner -Dsonar.projectKey=devsecops -Dsonar.sources=. -Dsonar.host.url=http://3.23.103.145:9000 -Dsonar.token=sqp_72a951e99889e209b3a3c5b3267ee67a1e0f2e9e
+      - echo Logging starting build ...
+      - aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 954503069243.dkr.ecr.us-east-2.amazonaws.com
+      - echo looged into ECR repo 
+  build:
+    on-failure: ABORT 
+    commands:
+      # Linting the DockerFile  using HADOLINT 
+      - echo "DOCKER FILE LINT STATGE"
+      - echo "PRE_BUILD Phase Will fail if Dockerfile is not secure or linted"
+      - echo Using Hadolint for Dockerfile linting
+      - docker pull hadolint/hadolint:v1.16.2
+      - docker run --rm -i -v ${PWD}/.hadolint.yaml:/.hadolint.yaml hadolint/hadolint:v1.16.2 hadolint -f json - < ./Dockerfile
+      - echo DOCKER FILE LINT STATGE - PASSED
+      # Docker Build Starts using Docker Commands
+      - echo Build started on `date`
+      - echo Building the  Docker image...          
+      - docker build -t devsecops .
+      - docker tag devsecops $REPOSITORY_URI:$CODEBUILD_BUILD_NUMBER
+      - docker tag devsecops $REPOSITORY_URI:latest
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      #- docker push $REPOSITORY_URI
+      - docker push $REPOSITORY_URI:$CODEBUILD_BUILD_NUMBER
+      - docker push $REPOSITORY_URI:latest
+      # Docker Image scanning ---->  Static Scaning using Anchore Engine 
+      -  echo "Deep Vulnerability Scan ANCHORE"
+      - echo "POST_BUILD Phase Will fail if Container fails with Vulnerabilities"
+      - export COMPOSE_INTERACTIVE_NO_CLI=1
+      - curl -s https://ci-tools.anchore.io/inline_scan-v0.6.0 | bash -s -- -r $REPOSITORY_URI:latest
+      - |
+        jq "{ \"messageType\": \"CodeScanReport\", \"reportType\": \"ANCHORE\", \"createdAt\": $(date +\"%Y-%m-%dT%H:%M:%S.%3NZ\"), \"source_repository\": \"$CODEBUILD_SOURCE_REPO_URL\", \"source_branch\": \"$CODEBUILD_SOURCE_VERSION\", \"build_id\": \"$CODEBUILD_BUILD_ID\", \"source_commitid\": \"$CODEBUILD_RESOLVED_SOURCE_VERSION\", \"report\": . }" anchore-reports/*.json > payload.json
+  post_build:
+    on-failure: ABORT 
+    commands:
+      - echo "Update Image tag in kube-manifest..."
+      #- sed -i 's@CONTAINER_IMAGE@'"$REPOSITORY_URI"'@' manifests/flask-pod.yaml
+      - sed -i "s/latest/$CODEBUILD_BUILD_NUMBER/g" manifests/flask-pod.yaml
+      - echo "validating creds"  
+      - aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+      - aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+      - aws configure set region $AWS_DEFAULT_REGION
+      - aws sts get-caller-identity     
+      # kubelinting the manifests files 
+      - wget https://github.com/stackrox/kube-linter/releases/download/v0.6.8/kube-linter-linux.tar.gz
+      - tar -xvzf kube-linter-linux.tar.gz
+      - cp kube-linter /usr/local/bin
+      - kube-linter lint  manifests/ --config kubelinter-config.yaml    
+      # applying kube manifests 
+      - echo "Update Kube Config"      
+      - aws eks --region us-east-2 update-kubeconfig --name genai-devsecops-poc-eks
+      - echo "Apply changes to kube manifests"            
+      - kubectl apply -f manifests/
+      - echo "Completed applying changes to Kubernetes Objects"  
+      # Dynamic Application Security testing ------>  DAST  Using OWASP ZAP 
+      - yum install java -y 
+    #   - wget https://github.com/zaproxy/zaproxy/releases/download/v2.13.0/ZAP_2.13.0_Linux.tar.gz
+      - wget https://github.com/zaproxy/zaproxy/releases/download/v2.15.0/ZAP_2.15.0_Linux.tar.gz
+      - mkdir zap
+      - tar -xvf ZAP_2.15.0_Linux.tar.gz
+      - cd ZAP_2.15.0
+      - ./zap.sh -cmd -quickurl http://ae7d5030a34e94b5aae12c8770c136d2-1164226005.us-west-2.elb.amazonaws.com/ -quickprogress -quickout ../zap_report.html 
+
+       
+artifacts:
+  files: 
+   - '**/*'
+   - zap_report.html
+    
+
+ 

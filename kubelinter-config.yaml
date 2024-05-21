@@ -1,0 +1,18 @@
+checks:
+  addAllBuiltIn: true
+  exclude:
+    - "no-read-only-root-fs"
+    - "latest-tag"
+    - "run-as-non-root"
+    - "use-namespace"
+    - "exposed-services"
+    - "required-label-owner"
+    - "required-annotation-email"
+    - "non-isolated-pod"
+    - "no-readiness-probe"
+    - "no-node-affinity"
+    - "default-service-account"
+    - "dnsconfig-options"
+    - "no-liveness-probe"
+    - "unset-memory-requirements"
+    - "unset-cpu-requirements"
